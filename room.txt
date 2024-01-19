@@ -1,0 +1,74 @@
+const express = require('express');
+const http = require('http');
+const socketIo = require('socket.io');
+
+const app = express();
+const server = http.createServer(app);
+const io = socketIo(server);
+
+const rooms = new Map();
+
+io.on('connection', (socket) => {
+  console.log('A user connected');
+
+  // Handle player joining or creating a room
+  socket.on('join-room', () => {
+    let roomFound = false;
+
+    // Check if there's an available room
+    rooms.forEach((players, roomId) => {
+      if (players.length === 1) {
+        // Join the existing room
+        rooms.get(roomId).push(socket.id);
+        socket.join(roomId);
+        roomFound = true;
+
+        // Notify the players about the successful join
+        io.to(roomId).emit('room-joined', { roomId });
+      }
+    });
+
+    if (!roomFound) {
+      // Create a new room
+      const newRoomId = socket.id;
+      rooms.set(newRoomId, [socket.id]);
+      socket.join(newRoomId);
+
+      // Notify the player about the created room
+      socket.emit('room-created', { roomId: newRoomId });
+    }
+  });
+
+  socket.on('disconnect', () => {
+    console.log('User disconnected');
+
+    // Remove the disconnected player from the rooms
+    rooms.forEach((players, roomId) => {
+      const index = players.indexOf(socket.id);
+      if (index !== -1) {
+        players.splice(index, 1);
+
+        // Notify the remaining player about the disconnection
+        if (players.length === 1) {
+          io.to(roomId).emit('opponent-disconnected');
+        }
+
+        // Remove the room if no players are left
+        if (players.length === 0) {
+          rooms.delete(roomId);
+        }
+      }
+    });
+  });
+
+  socket.on('player-move', (data) => {
+    // Broadcast the player's move to the other player
+    socket.to(data.roomId).broadcast.emit('opponent-move', data);
+  });
+});
+
+const PORT = process.env.PORT || 3001;
+
+server.listen(PORT, () => {
+  console.log(`Server running on http://localhost:${PORT}`);
+});
